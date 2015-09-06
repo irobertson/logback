@@ -16,6 +16,8 @@ package ch.qos.logback.core.rolling.helper;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class AsynchronousCompressor {
   Compressor compressor;
@@ -25,12 +27,39 @@ public class AsynchronousCompressor {
   }
 
   public Future<?> compressAsynchronously(String nameOfFile2Compress,
-      String nameOfCompressedFile, String innerEntryName) {
-    ExecutorService executor = Executors.newScheduledThreadPool(1);
+      String nameOfCompressedFile, String innerEntryName, final ICallback callback) {
+    ExecutorService executor = getExecutor(callback);
     Future<?> future = executor.submit(new CompressionRunnable(compressor,
         nameOfFile2Compress, nameOfCompressedFile, innerEntryName));
     executor.shutdown();
     return future;
   }
 
+  private static ExecutorService getExecutor(final ICallback callback) {
+    final AtomicLong count = new AtomicLong(0);
+    return Executors.newScheduledThreadPool(1, new ThreadFactory() {
+      @Override
+      public Thread newThread(final Runnable r) {
+        Thread t = new Thread() {
+          public void run() {
+            try {
+              r.run();
+            } finally {
+              if (callback != null) {
+                callback.done();
+              }
+            }
+          }
+        };
+        t.setDaemon(false);
+        t.setName("logback-file-compressor" + count.getAndIncrement());
+        t.setPriority(Thread.MIN_PRIORITY);
+        return t;
+      }
+    });
+  }
+
+  public interface ICallback {
+    void done();
+  }
 }
